@@ -1,6 +1,12 @@
 import Foundation
 
 enum FacebookURL {
+    static func isMessenger(_ url: URL) -> Bool {
+        url.scheme == "https"
+            && isTrustedHost(url.host ?? "", domain: "facebook.com")
+            && (url.path == "/messages" || url.path.hasPrefix("/messages/"))
+    }
+
     static func isTrustedHost(_ host: String, domain: String) -> Bool {
         let host = host.lowercased()
         return host == domain || host.hasSuffix("." + domain)

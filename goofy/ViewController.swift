@@ -48,6 +48,7 @@ class ViewController: NSViewController {
         updateBadge(count: 0)
         recovery = WebViewRecovery(webView: webView)
         recovery?.onFailure = { [weak self] message in self?.showLoadError(message) }
+        recovery?.onContentAvailable = { [weak self] in self?.loadingView.isHidden = true }
         loadMessenger()
     }
 
@@ -60,7 +61,7 @@ class ViewController: NSViewController {
     }
 
     deinit {
-        webView.configuration.userContentController.removeScriptMessageHandler(
+        webView?.configuration.userContentController.removeScriptMessageHandler(
             forName: messageHandlerName, contentWorld: .defaultClient)
     }
 
@@ -474,7 +475,7 @@ extension ViewController: WKNavigationDelegate {
     }
 
     func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
-        loadingView.isHidden = false
+        loadingView.isHidden = webView.url.map { !FacebookURL.isMessenger($0) } ?? true
     }
 
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {

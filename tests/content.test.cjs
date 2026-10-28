@@ -93,3 +93,11 @@ test('refresh reuses the conversation scan for the badge count', () => {
   assert.equal(p.messages.find(m => m.type === 'badge')?.count, 1);
   assert.equal(p.queries.filter(q => q.includes('.x1spa7qu')).length, 0);
 });
+
+test('restored history page reports readiness without replaying notifications', () => {
+  const p = page({threads: [{key: '/messages/t/1', unread: true}]});
+  assert.equal(typeof p.listeners.pageshow, 'function');
+  p.listeners.pageshow({persisted: true});
+  assert.equal(p.messages.filter(m => m.type === 'ready').length, 2);
+  assert.equal(p.messages.filter(m => m.type === 'notification').length, 0);
+});

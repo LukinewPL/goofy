@@ -234,6 +234,12 @@ window.__GOOFY = {
       onRemove: () => { this.threadSnapshots = null; },
     });
     window.addEventListener("focus", () => this.scheduleRefresh());
+    window.addEventListener("pageshow", (event) => {
+      if (event.persisted) {
+        this.pageReady = false;
+        this.refresh();
+      }
+    });
     document.addEventListener("visibilitychange", () => {
       if (document.visibilityState === "visible") this.scheduleRefresh();
     });

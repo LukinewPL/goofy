@@ -4,6 +4,10 @@ import WebKit
 @MainActor
 final class RecoveryProbeWebView: WKWebView {
     var requests = 0
+    override func reload() -> WKNavigation? {
+        requests += 1
+        return nil
+    }
     override func load(_ request: URLRequest) -> WKNavigation? {
         requests += 1
         return nil
@@ -32,7 +36,7 @@ final class SmokeTest: NSObject, NSApplicationDelegate, WKNavigationDelegate, WK
         let script = try! String(contentsOfFile: scriptPath, encoding: .utf8)
         config.userContentController.addUserScript(WKUserScript(source: script, injectionTime: .atDocumentEnd,
                                                                forMainFrameOnly: true, in: .defaultClient))
-        webView = WKWebView(frame: NSRect(x: 0, y: 0, width: 700, height: 600), configuration: config)
+        webView = RecoveryProbeWebView(frame: NSRect(x: 0, y: 0, width: 700, height: 600), configuration: config)
         webView.navigationDelegate = self
         window = NSWindow(contentRect: webView.frame, styleMask: [.titled, .miniaturizable], backing: .buffered, defer: false)
         window.title = "Goofy WebKit regression test"
@@ -86,6 +90,10 @@ final class SmokeTest: NSObject, NSApplicationDelegate, WKNavigationDelegate, WK
                 guard badges.last == 1, loadingView.isHidden else {
                     return finish(false, "Inbox exists but readiness was not detected within 900 ms")
                 }
+                loadingView.isHidden = false
+                _ = try await webView.evaluateJavaScript("window.dispatchEvent(new PageTransitionEvent('pageshow', {persisted: true}))")
+                try await Task.sleep(for: .milliseconds(150))
+                guard loadingView.isHidden else { return finish(false, "Loading overlay after history restoration") }
                 _ = try await webView.evaluateJavaScript("document.getElementById('dot').className = ''")
                 try await Task.sleep(for: .milliseconds(250))
                 guard badges.last == 0, readThreads.contains("/messages/t/1") else {
@@ -114,6 +122,41 @@ final class SmokeTest: NSObject, NSApplicationDelegate, WKNavigationDelegate, WK
                     let result = try await webView.evaluateJavaScript("1 + 1")
                     guard result as? Int == 2 else { return finish(false, "WebKit after minimization") }
                 }
+                NSApp.activate(ignoringOtherApps: true)
+                window.makeKeyAndOrderFront(nil)
+                try await Task.sleep(for: .milliseconds(200))
+                _ = try await webView.evaluateJavaScript(
+                    "const originalIsReady = window.__GOOFY.isReady; window.__GOOFY.isReady = () => false; true;",
+                    in: nil, contentWorld: .defaultClient)
+                let safety = WebViewRecovery(webView: webView)
+                var readinessFeedback: String?
+                safety.onFailure = { readinessFeedback = $0 }
+                safety.checkHealth()
+                try await Task.sleep(for: .milliseconds(1300))
+                guard readinessFeedback?.contains("Retry") == true,
+                      (webView as! RecoveryProbeWebView).requests == 0 else {
+                    return finish(false, "Responsive unfamiliar page must not be reloaded automatically")
+                }
+                safety.suspend()
+                _ = try await webView.evaluateJavaScript("window.__GOOFY.isReady = originalIsReady; true;", in: nil, contentWorld: .defaultClient)
+                let stalledView = webView as! RecoveryProbeWebView
+                _ = try await webView.evaluateJavaScript("""
+                    setTimeout(() => {
+                        const deadline = performance.now() + 12000;
+                        while (performance.now() < deadline) {}
+                    }, 0);
+                    true;
+                    """, in: nil, contentWorld: .defaultClient)
+                let stalledRecovery = WebViewRecovery(webView: webView)
+                var stalledFeedback: String?
+                stalledRecovery.onFailure = { stalledFeedback = $0 }
+                stalledRecovery.checkHealth()
+                try await Task.sleep(for: .milliseconds(11400))
+                guard stalledFeedback?.contains("Retry") == true, stalledView.requests == 0 else {
+                    return finish(false, "Unresponsive page must offer Retry without discarding drafts automatically")
+                }
+                stalledRecovery.suspend()
+                try await Task.sleep(for: .milliseconds(1000))
                 let probe = RecoveryProbeWebView(frame: .zero, configuration: WKWebViewConfiguration())
                 let recovery = WebViewRecovery(webView: probe)
                 var status: String?

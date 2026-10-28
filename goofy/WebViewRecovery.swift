@@ -23,6 +23,7 @@ final class WebViewRecovery {
     private var connected = true
     private var needsRecovery = false
     var onFailure: ((String?) -> Void)?
+    var onContentAvailable: (() -> Void)?
 
     init(webView: WKWebView) {
         self.webView = webView
@@ -141,9 +142,7 @@ final class WebViewRecovery {
         needsRecovery = false
         cancelProbe()
         webView.stopLoading()
-        if let url = webView.url,
-           FacebookURL.isTrustedHost(url.host ?? "", domain: "facebook.com"),
-           url.path.hasPrefix("/messages") {
+        if let url = webView.url, FacebookURL.isMessenger(url) {
             if webView.reload() == nil { webView.load(URLRequest(url: url)) }
         } else {
             webView.load(URLRequest(url: URL(string: "https://www.facebook.com/messages/")!))
@@ -165,8 +164,7 @@ final class WebViewRecovery {
         guard let webView, connected, !suspended, !recoveryStopped, retry == nil, probeID == nil,
               NSApp.isActive, let window = webView.window,
               window.isVisible, !window.isMiniaturized, !webView.isLoading,
-              let url = webView.url, url.path.hasPrefix("/messages"),
-              FacebookURL.isTrustedHost(url.host ?? "", domain: "facebook.com") else { return }
+              let url = webView.url, FacebookURL.isMessenger(url) else { return }
         let id = UUID()
         probeID = id
         let timeout = DispatchWorkItem { [weak self] in
@@ -176,7 +174,9 @@ final class WebViewRecovery {
                 self.cancelProbe()
                 return
             }
-            self.recover(reason: "Messenger stopped responding.")
+            // A busy script is not proof that replacing the document is safe.
+            self.cancelProbe()
+            self.onFailure?("Messenger stopped responding. Use Retry to reload the page.")
         }
         probeTimeout = timeout
         DispatchQueue.main.asyncAfter(deadline: .now() + 10, execute: timeout)
@@ -189,10 +189,13 @@ final class WebViewRecovery {
             if case .success(let value) = result, value as? Bool == true {
                 self.budget.reset()
                 self.needsRecovery = false
+                self.onContentAvailable?()
                 self.onFailure?(nil)
             } else if ProcessInfo.processInfo.systemUptime >= self.readinessDeadline {
-                // A loaded HTML document does not mean Messenger's client has started.
-                self.recover(reason: "Messenger did not finish starting.")
+                // A responsive page can have a changed layout or an open editor.
+                // Do not replace it just because our sidebar selector no longer matches.
+                self.onContentAvailable?()
+                self.onFailure?("Messenger's interface is not ready. Use Retry if it remains unavailable.")
             }
         }
     }
